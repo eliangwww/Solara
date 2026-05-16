@@ -663,8 +663,26 @@ const QUALITY_OPTIONS = [
     { value: "128", label: "标准音质", description: "128 kbps" },
     { value: "192", label: "高品音质", description: "192 kbps" },
     { value: "320", label: "极高音质", description: "320 kbps" },
-    { value: "999", label: "无损音质", description: "FLAC" }
+    { value: "740", label: "无损音质", description: "FLAC (16bit)" },
+    { value: "999", label: "母带音质", description: "FLAC (24bit)" }
 ];
+
+function normalizeQuality(value) {
+    const match = QUALITY_OPTIONS.find(option => option.value === value);
+    return match ? match.value : "320";
+}
+
+// 新增：借鉴洛雪脚本的音质降级策略
+function getQualityFallbackChain(quality) {
+    switch(quality) {
+        case '999': return ['999', '740', '320', '192', '128'];
+        case '740': return ['740', '320', '192', '128'];
+        case '320': return ['320', '192', '128'];
+        case '192': return ['192', '128'];
+        case '128': return ['128'];
+        default: return ['320', '128'];
+    }
+}
 
 function normalizeQuality(value) {
     const match = QUALITY_OPTIONS.find(option => option.value === value);
