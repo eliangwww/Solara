@@ -787,6 +787,7 @@ const savedCurrentPlaylist = (() => {
 })();
 
 // API配置 - 修复API地址和请求方式
+// API配置 - 修复API地址和请求方式
 const API = {
     baseUrl: "/proxy",
 
@@ -5645,7 +5646,6 @@ async function playSong(song, options = {}) {
             debugLog(`由于目标音质不可用，已自动降级为音质: ${actualQuality}`);
         }
 
-        const originalAudioUrl = audioData.url;
         const proxiedAudioUrl = buildAudioProxyUrl(originalAudioUrl);
         const preferredAudioUrl = preferHttpsUrl(originalAudioUrl);
         const candidateAudioUrls = Array.from(
@@ -6325,6 +6325,7 @@ function scrollToCurrentLyric(element, containerOverride) {
 
 // 修复：下载歌曲
 // 替换原有逻辑以支持降级与文件扩展名准确提取
+// 修复：下载歌曲
 async function downloadSong(song, quality = "320") {
     try {
         showNotification("正在准备下载...");
@@ -6338,7 +6339,11 @@ async function downloadSong(song, quality = "320") {
             const proxiedAudioUrl = buildAudioProxyUrl(actualUrl);
             const preferredAudioUrl = preferHttpsUrl(actualUrl);
 
-            // ... (日志保留)
+            if (proxiedAudioUrl !== actualUrl) {
+                debugLog(`下载链接已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
+            } else if (preferredAudioUrl !== actualUrl) {
+                debugLog(`下载链接由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
+            }
 
             const downloadUrl = proxiedAudioUrl || preferredAudioUrl || actualUrl;
 
@@ -6355,7 +6360,9 @@ async function downloadSong(song, quality = "320") {
                     if (match) {
                         return match[1];
                     }
-                } catch (error) {}
+                } catch (error) {
+                    console.warn("无法从下载链接中解析扩展名:", error);
+                }
                 return preferredExtension;
             })();
             
