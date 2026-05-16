@@ -915,6 +915,37 @@ const API = {
         return `${API.baseUrl}?types=url&id=${song.id}&source=${song.source || "netease"}&br=${quality}&s=${signature}`;
     },
 
+    // 新增：提取URL的健壮方法 (借鉴洛雪脚本)
+    extractUrl: (data) => {
+        if (!data) return null;
+        if (data.url) return data.url;
+        if (data.data && data.data.url) return data.data.url;
+        return null;
+    },
+
+    // 新增：带降级策略的音频获取
+    fetchSongWithFallback: async (song, targetQuality) => {
+        const chain = getQualityFallbackChain(targetQuality);
+        
+        for (const br of chain) {
+            const url = API.getSongUrl(song, br);
+            try {
+                const data = await API.fetchJson(url);
+                const audioUrl = API.extractUrl(data);
+                
+                if (audioUrl) {
+                    debugLog(`成功获取音质 ${br} 的URL`);
+                    return { url: audioUrl, quality: br, raw: data };
+                } else {
+                    debugLog(`音质 ${br} 无法提取URL，尝试降级`);
+                }
+            } catch (e) {
+                debugLog(`获取音质 ${br} 失败: ${e.message}，尝试降级`);
+            }
+        }
+        throw new Error('所有音质尝试均失败，无法获取音频播放地址');
+    },
+
     getLyric: (song) => {
         const signature = API.generateSignature();
         return `${API.baseUrl}?types=lyric&id=${song.lyric_id || song.id}&source=${song.source || "netease"}&s=${signature}`;
@@ -4445,7 +4476,8 @@ function showQualityMenu(event, index, type) {
         <div class="quality-option" onclick="downloadWithQuality(event, ${index}, '${type}', '128')">标准音质 (128k)</div>
         <div class="quality-option" onclick="downloadWithQuality(event, ${index}, '${type}', '192')">高音质 (192k)</div>
         <div class="quality-option" onclick="downloadWithQuality(event, ${index}, '${type}', '320')">超高音质 (320k)</div>
-        <div class="quality-option" onclick="downloadWithQuality(event, ${index}, '${type}', '999')">无损音质</div>
+        <div class="quality-option" onclick="downloadWithQuality(event, ${index}, '${type}', '740')">无损音质 (FLAC 16bit)</div>
+        <div class="quality-option" onclick="downloadWithQuality(event, ${index}, '${type}', '999')">母带音质 (FLAC 24bit)</div>
     `;
 
     // 设置菜单位置
@@ -5602,13 +5634,15 @@ async function playSong(song, options = {}) {
         updateCurrentSongInfo(song, { loadArtwork: false });
 
         const quality = state.playbackQuality || '320';
-        const audioUrl = API.getSongUrl(song, quality);
-        debugLog(`获取音频URL: ${audioUrl}`);
-
-        const audioData = await API.fetchJson(audioUrl);
-
-        if (!audioData || !audioData.url) {
-            throw new Error('无法获取音频播放地址');
+        debugLog(`尝试获取音频，目标音质: ${quality}`);
+        
+        // 使用新的降级策略获取音频
+        const result = await API.fetchSongWithFallback(song, quality);
+        const originalAudioUrl = result.url;
+        const actualQuality = result.quality;
+        
+        if (actualQuality !== quality) {
+            debugLog(`由于目标音质不可用，已自动降级为音质: ${actualQuality}`);
         }
 
         const originalAudioUrl = audioData.url;
@@ -6290,49 +6324,52 @@ function scrollToCurrentLyric(element, containerOverride) {
 }
 
 // 修复：下载歌曲
+// 替换原有逻辑以支持降级与文件扩展名准确提取
 async function downloadSong(song, quality = "320") {
     try {
         showNotification("正在准备下载...");
 
-        const audioUrl = API.getSongUrl(song, quality);
-        const audioData = await API.fetchJson(audioUrl);
+        // 使用带降级策略的API请求下载链接
+        const result = await API.fetchSongWithFallback(song, quality);
+        const actualUrl = result.url;
+        const actualQuality = result.quality;
 
-        if (audioData && audioData.url) {
-            const proxiedAudioUrl = buildAudioProxyUrl(audioData.url);
-            const preferredAudioUrl = preferHttpsUrl(audioData.url);
+        if (actualUrl) {
+            const proxiedAudioUrl = buildAudioProxyUrl(actualUrl);
+            const preferredAudioUrl = preferHttpsUrl(actualUrl);
 
-            if (proxiedAudioUrl !== audioData.url) {
-                debugLog(`下载链接已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
-            } else if (preferredAudioUrl !== audioData.url) {
-                debugLog(`下载链接由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
-            }
+            // ... (日志保留)
 
-            const downloadUrl = proxiedAudioUrl || preferredAudioUrl || audioData.url;
+            const downloadUrl = proxiedAudioUrl || preferredAudioUrl || actualUrl;
 
             const link = document.createElement("a");
             link.href = downloadUrl;
-            const preferredExtension =
-                quality === "999" ? "flac" : quality === "740" ? "ape" : "mp3";
+            
+            // 修正后缀判断逻辑：如果是 999 或者是 740 都倾向于是 flac
+            const preferredExtension = (actualQuality === "999" || actualQuality === "740") ? "flac" : "mp3";
             const fileExtension = (() => {
                 try {
-                    const url = new URL(audioData.url);
+                    const url = new URL(actualUrl);
                     const pathname = url.pathname || "";
                     const match = pathname.match(/\.([a-z0-9]+)$/i);
                     if (match) {
                         return match[1];
                     }
-                } catch (error) {
-                    console.warn("无法从下载链接中解析扩展名:", error);
-                }
+                } catch (error) {}
                 return preferredExtension;
             })();
+            
             link.download = `${song.name} - ${Array.isArray(song.artist) ? song.artist.join(", ") : song.artist}.${fileExtension}`;
             link.target = "_blank";
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
 
-            showNotification("下载已开始", "success");
+            if (actualQuality !== quality) {
+                showNotification(`目标音质不可用，已为您下载 ${actualQuality} 品质`, "warning");
+            } else {
+                showNotification("下载已开始", "success");
+            }
         } else {
             throw new Error("无法获取下载地址");
         }
@@ -6341,7 +6378,6 @@ async function downloadSong(song, quality = "320") {
         showNotification("下载失败，请稍后重试", "error");
     }
 }
-
 // 修复：移动端视图切换
 function switchMobileView(view) {
     if (view === "playlist") {
