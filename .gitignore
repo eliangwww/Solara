@@ -4,3 +4,8 @@ data/
 
 # Cloudflare Wrangler local state (fallback)
 .wrangler/
+
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
